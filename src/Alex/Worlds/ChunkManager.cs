@@ -445,9 +445,9 @@ namespace Alex.Worlds
 		
         public void AddChunk(ChunkColumn chunk, ChunkCoordinates position, bool doUpdates = false)
         {
-	        if (chunk is ChunkColumn cc && Options.VideoOptions.ClientSideLighting)
+	        if (Options.VideoOptions.ClientSideLighting)
 	        {
-		        cc.CalculateHeight();
+		        chunk.CalculateHeight();
 	        }
 	        
             var c = Chunks.AddOrUpdate(position, coordinates =>
@@ -461,7 +461,7 @@ namespace Alex.Worlds
 		            chunk1.Dispose();
 	            }
 
-	            Log.Warn($"Replaced/Updated chunk at {position}");
+	           // Log.Warn($"Replaced/Updated chunk at {position}");
                 return chunk;
             });
             
@@ -826,16 +826,9 @@ namespace Alex.Worlds
 			    {
 				    if (Options.VideoOptions.ClientSideLighting)
 				    {
-					    if (chunk is ChunkColumn cc && (cc.BlockLightDirty || cc.IsNew))
+					    if ((chunk.BlockLightDirty || chunk.IsNew))
 					    {
-						    var chunkpos = new BlockCoordinates(cc.X * 16, 0, cc.Z * 16);
-
-						    foreach (var ls in cc.GetLightSources())
-						    {
-							    BlockLightCalculations.Enqueue(chunkpos + ls);
-						    }
-
-						    cc.BlockLightDirty = false;
+						    ScheduleLightUpdate(position);
 					    }
 				    }
 
@@ -851,6 +844,21 @@ namespace Alex.Worlds
 		    }
 	    }
 
+	    public void ScheduleLightUpdate(ChunkCoordinates coordinates)
+	    {
+		    if (Chunks.TryGetValue(coordinates, out ChunkColumn chunk))
+		    {
+			    var chunkpos = new BlockCoordinates(chunk.X * 16, 0, chunk.Z * 16);
+
+			    foreach (var ls in chunk.GetLightSources())
+			    {
+				    BlockLightCalculations.Enqueue(chunkpos + ls);
+			    }
+
+			    chunk.BlockLightDirty = false;
+		    }
+	    }
+
 	    internal void FlagPrioritization()
 	    {
 		    NeedPrioritization = true;
@@ -861,11 +869,8 @@ namespace Alex.Worlds
 	    public TimeSpan ChunkUpdateTime { get; set; } = TimeSpan.Zero;
 	    public long TotalChunkUpdates { get; set; } = 0;
 
-	    private ObjectPool<ChunkBuilderBlockAccess> _blockAccessPool;
-	    private void UpdateChunk(ChunkCoordinates coordinates, ChunkColumn c)
+	    private void UpdateChunk(ChunkCoordinates coordinates, ChunkColumn chunk)
 	    {
-		    var chunk = c as ChunkColumn;
-
 		    if (!Monitor.TryEnter(chunk.UpdateLock))
 		    {
 			    Interlocked.Decrement(ref _chunkUpdates);
@@ -915,7 +920,7 @@ namespace Alex.Worlds
 				    foreach (var s in chunk.Sections.Where(x => x != null && !x.IsEmpty())
 					   .OrderByDescending(sec => MathF.Abs(currentChunkY - sec.GetYLocation())))
 				    {
-					    ChunkSection section = (ChunkSection) s;
+					    ChunkSection section = s;
 
 					    var i = section.GetYLocation();
 
@@ -945,25 +950,26 @@ namespace Alex.Worlds
 					    }
 					    else
 					    {
-						    if (section.MeshCache != null)
-							    meshes.Add(section.MeshCache);
+						    var mesh = section.MeshCache;
+						    if (mesh != null && !mesh.Disposed)
+							    meshes.Add(mesh);
 					    }
 				    }
 
 				    if (meshed > 0) //We did not re-mesh ANY chunks. Not worth re-building.
 				    {
 
-					    IDictionary<RenderStage, List<int>> newStageIndexes = Options.MiscelaneousOptions.ObjectPools ?
-						    (IDictionary<RenderStage, List<int>>) new PooledDictionary<RenderStage, List<int>>(
-							    ClearMode.Auto) : new Dictionary<RenderStage, List<int>>();
+					    IDictionary<RenderStage, List<int>> newStageIndexes = new Dictionary<RenderStage, List<int>>();
 
-					    IList<BlockShaderVertex> vertices = Options.MiscelaneousOptions.ObjectPools ?
-						    (IList<BlockShaderVertex>) new PooledList<BlockShaderVertex>(ClearMode.Auto) : new List<BlockShaderVertex>();
+					    IList<BlockShaderVertex> vertices = new List<BlockShaderVertex>();
 					    
 					    try
 					    {
 						    foreach (var mesh in meshes)
 							    {
+								    if (mesh.Disposed)
+									    continue;
+								    
 								    var startVerticeIndex = vertices.Count;
 
 								    foreach (var vertice in mesh.Vertices)
@@ -1159,8 +1165,11 @@ namespace Alex.Worlds
         {
 	        using (PooledList<BlockShaderVertex> vertices =
 		        new PooledList<BlockShaderVertex>(ClearMode.Auto))
-	        {
-		        using (PooledDictionary<RenderStage, List<int>> stages = new PooledDictionary<RenderStage, List<int>>(RenderStages.Length))
+		  //  List<BlockShaderVertex> vertices = new List<BlockShaderVertex>();
+
+		    {
+			    Dictionary<RenderStage, List<int>> stages =
+				    new Dictionary<RenderStage, List<int>>(RenderStages.Length);
 		        {
 			        foreach (var stage in RenderStages)
 			        {

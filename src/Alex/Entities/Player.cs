@@ -9,9 +9,9 @@ using Alex.API.Utils;
 using Alex.API.World;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
-using Alex.GameStates.Playing;
 using Alex.Graphics.Camera;
 using Alex.Items;
+using Alex.Net;
 using Alex.Utils;
 using Alex.Worlds;
 using Alex.Worlds.Bedrock;
@@ -27,6 +27,8 @@ using ChunkCoordinates = Alex.API.Utils.ChunkCoordinates;
 using ContainmentType = Microsoft.Xna.Framework.ContainmentType;
 using IBlockState = Alex.API.Blocks.State.IBlockState;
 using Inventory = Alex.Utils.Inventory;
+using MathF = System.MathF;
+using PlayerLocation = Alex.API.Utils.PlayerLocation;
 using Skin = Alex.API.Utils.Skin;
 
 namespace Alex.Entities
@@ -48,18 +50,6 @@ namespace Alex.Entities
         public bool HasAdjacentRaytrace = false;
         public bool HasRaytraceResult = false;
 
-        public int Health { get; set; } = 20;
-        public int MaxHealth { get; set; } = 20;
-
-        public int Hunger { get; set; } = 19;
-        public int MaxHunger { get; set; } = 20;
-
-        public int Saturation { get; set; } = 0;
-        public int MaxSaturation { get; set; }
-        
-        public int Exhaustion { get; set; } = 0;
-        public int MaxExhaustion { get; set; }
-
         public bool IsFirstPersonMode { get; set; } = false;
         public bool IsLeftyHandy { get; set; } = false;
         
@@ -69,7 +59,7 @@ namespace Alex.Entities
         
         private World World { get; }
         public Camera Camera { get; internal set; }
-        public Player(GraphicsDevice graphics, InputManager inputManager, string name, World world, Skin skin, INetworkProvider networkProvider, PlayerIndex playerIndex, Camera camera) : base(name, world, networkProvider, skin.Texture)
+        public Player(GraphicsDevice graphics, InputManager inputManager, string name, World world, Skin skin, NetworkProvider networkProvider, PlayerIndex playerIndex, Camera camera) : base(name, world, networkProvider, skin.Texture)
         {
 	        World = world;
 		//	DoRotationCalculations = false;
@@ -81,11 +71,15 @@ namespace Alex.Entities
 			//Inventory = new Inventory(46);
 			//Inventory.SelectedHotbarSlotChanged += SelectedHotbarSlotChanged;
 			//base.Inventory.IsPeInventory = true;
-			MovementSpeed = 4.317f;
+			MovementSpeedModifier = 1f;
+			MovementSpeed = 4.306f;
+			BaseMovementSpeed = 4.317;
 			FlyingSpeed = 10.89f;
 
 			SnapHeadYawRotationOnMovement = false;
-
+			SnapYawRotationOnMovement = true;
+			DoRotationCalculations = false;
+			
 			RenderEntity = true;
 			ShowItemInHand = true;
 
@@ -159,7 +153,10 @@ namespace Alex.Entities
 	    private DateTime _lastTimeWithoutInput = DateTime.MinValue;
 	    private bool _prevCheckedInput = false;
 	    private DateTime _lastAnimate = DateTime.MinValue;
-	    public override void Update(IUpdateArgs args)
+
+	    public bool CanSprint => HealthManager.Hunger > 6;
+
+		public override void Update(IUpdateArgs args)
 		{
 			if (WaitingOnChunk && Age % 4 == 0)
 			{
@@ -179,6 +176,11 @@ namespace Alex.Entities
 
 			if (!CanFly && IsFlying)
 				IsFlying = false;
+
+			if (IsSprinting && !CanSprint)
+			{
+				IsSprinting = false;
+			}
 			
 			Controller.Update(args.GameTime);
 			//KnownPosition.HeadYaw = KnownPosition.Yaw;
@@ -209,6 +211,8 @@ namespace Alex.Entities
 					Camera.UpdateOffset(Vector3.Zero);
 				}
 			}
+			
+		//	DoHealthAndExhaustion();
 
 			var previousCheckedInput = _prevCheckedInput;
 			
@@ -228,14 +232,14 @@ namespace Alex.Entities
 				//}
 				
 				var hitEntity = HitEntity;
-				if (hitEntity != null && Controller.InputManager.IsPressed(InputCommand.LeftClick))
+				if (hitEntity != null && Controller.InputManager.IsPressed(InputCommand.LeftClick) && hitEntity is LivingEntity)
 				{
 					if (_destroyingBlock)
 						StopBreakingBlock(forceCanceled:true);
 					
 					InteractWithEntity(hitEntity, true);
 				}
-				else if (hitEntity != null && Controller.InputManager.IsPressed(InputCommand.RightClick))
+				else if (hitEntity != null && Controller.InputManager.IsPressed(InputCommand.RightClick) && hitEntity is LivingEntity)
 				{
 					if (_destroyingBlock)
 						StopBreakingBlock(forceCanceled:true);
@@ -246,7 +250,7 @@ namespace Alex.Entities
 				                           && Controller.InputManager.IsPressed(InputCommand.LeftClick)
 				                           && !HasRaytraceResult)
 				{
-					SwingArm(true);
+					HandleLeftClick(Inventory[Inventory.SelectedSlot], Inventory.SelectedSlot);
 				}
 				else if (hitEntity == null && !_destroyingBlock && Controller.InputManager.IsDown(InputCommand.LeftClick) && !IsWorldImmutable && HasRaytraceResult) //Destroying block.
 				{
@@ -289,7 +293,7 @@ namespace Alex.Entities
 					// Log.Debug($"Right click!");
 					if (item != null)
 					{
-						handledClick = HandleRightClick(item, Inventory.SelectedSlot);
+						handledClick = HandleClick(item, Inventory.SelectedSlot);
 					}
 
 					/*if (!handledClick && Inventory.OffHand != null && !(Inventory.OffHand is ItemAir))
@@ -329,8 +333,18 @@ namespace Alex.Entities
 
 		}
 
-	    private void InteractWithEntity(IEntity entity, bool attack)
+	    public void Jump()
 	    {
+		    HealthManager.Exhaust(IsSprinting ? 0.2f : 0.05f);
+		    
+		    Velocity += new Vector3(0f, MathF.Sqrt(2f * (float) Gravity * 1.2f), 0f);
+		    Network?.EntityAction((int) EntityId, EntityAction.Jump);
+	    }
+
+	    private void InteractWithEntity(Entity entity, bool attack)
+	    {
+		    SwingArm(true);
+		    
 		    bool canAttack = true;
 
 		    if (entity is PlayerMob)
@@ -355,8 +369,8 @@ namespace Alex.Entities
 		    }
 	    }
 
-	    public IEntity HitEntity { get; private set; } = null;
-	    public IEntity[] EntitiesInRange { get; private set; } = null;
+	    public Entity HitEntity { get; private set; } = null;
+	    public Entity[] EntitiesInRange { get; private set; } = null;
 
 	    private void UpdateRayTracer()
 	    {
@@ -372,7 +386,7 @@ namespace Alex.Entities
 			    return;
 		    }
 		    
-		    IEntity hitEntity = null;
+		    Entity hitEntity = null;
 		    for (float x = 0.5f; x < 8f; x += 0.1f)
 		    {
 			    Vector3 targetPoint = camPos + (lookVector * x);
@@ -396,6 +410,8 @@ namespace Alex.Entities
 
 	    private void StartBreakingBlock()
 	    {
+		    SwingArm(true);
+		    
 			var floored =  Vector3.Floor(Raytraced);
 
 		    var block = Level.GetBlock(floored);
@@ -466,8 +482,14 @@ namespace Alex.Entities
 		    return adj.GetBlockFace();
         }
 
-	    private bool HandleRightClick(Item slot, int hand)
+	    private void HandleLeftClick(Item slot, int hand)
 	    {
+		    HandleClick(slot, hand, false, true);
+	    }
+
+	    private bool HandleClick(Item slot, int hand, bool canModifyWorld = true, bool isLeftClick = false)
+	    {
+		    SwingArm(true);
 		    //if (ItemFactory.ResolveItemName(slot.ItemID, out string itemName))
 		    {
 			    var flooredAdj = Vector3.Floor(AdjacentRaytrace);
@@ -484,7 +506,7 @@ namespace Alex.Entities
 			    var coordR = new BlockCoordinates(raytraceFloored);
 			    
 			    //IBlock block = null;
-			    if (!IsWorldImmutable)
+			    if (!IsWorldImmutable && HasRaytraceResult)
 			    {
 				    var existingBlock = Level.GetBlock(coordR);
 				    bool isBlockItem = slot is ItemBlock;
@@ -496,7 +518,7 @@ namespace Alex.Entities
 					    return true;
 				    }
 				    
-				    if (slot is ItemBlock ib)
+				    if (slot is ItemBlock ib && canModifyWorld)
 				    {
 					    BlockState blockState = ib.Block;
 
@@ -530,11 +552,19 @@ namespace Alex.Entities
 			    }
 
 			    if (!(slot is ItemAir) && slot.Id > 0 && slot.Count > 0)
-                {
-                    Network?.UseItem(slot, hand);
-                    Log.Debug($"Used item!");
-
-	                return true;
+			    {
+				    ItemUseAction action;
+	                if (isLeftClick)
+	                {
+		                action = HasRaytraceResult ? ItemUseAction.ClickBlock : ItemUseAction.ClickAir;
+	                }
+	                else
+	                {
+		                action = HasRaytraceResult ? ItemUseAction.RightClickBlock : ItemUseAction.RightClickAir;
+	                }
+	                
+                    Network?.UseItem(slot, hand, action);
+                    return true;
                 }
             }
 
@@ -554,13 +584,7 @@ namespace Alex.Entities
 		    return true;
 	    }
 
-		public override void TerrainCollision(Vector3 collisionPoint, Vector3 direction)
-		{
-		//	Log.Debug($"Terrain collision: {collisionPoint.ToString()} | {direction}");	
-			base.TerrainCollision(collisionPoint, direction);
-		}
-
-		public override BoundingBox GetBoundingBox(Vector3 pos)
+	    public override BoundingBox GetBoundingBox(Vector3 pos)
 		{
 			double halfWidth = (0.6 * Scale) / 2D;
 			var height = IsSneaking ? 1.5 : Height;

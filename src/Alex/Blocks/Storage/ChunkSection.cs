@@ -1,21 +1,13 @@
 ﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
-using Alex.API.Blocks;
-using Alex.API.Blocks.State;
 using Alex.API.Graphics;
 using Alex.API.Utils;
-using Alex.API.World;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
 using Alex.Networking.Java.Util;
-using Alex.ResourcePackLib.Json;
-using Alex.Utils;
 using Alex.Worlds;
-using Alex.Worlds.Lighting;
-using Microsoft.Xna.Framework;
 using NLog;
-using BitArray = Alex.API.Utils.BitArray;
 
 namespace Alex.Blocks.Storage
 {
@@ -49,7 +41,26 @@ namespace Alex.Blocks.Storage
         public List<BlockCoordinates> LightSources { get; } = new List<BlockCoordinates>();
         
 		public bool IsAllAir => _blockRefCount == 0;
-		internal ChunkMesh MeshCache { get; set; } = null;
+
+		private ChunkMesh _meshCache = null;
+
+		internal ChunkMesh MeshCache
+		{
+			get
+			{
+				return _meshCache;
+			}
+			set
+			{
+				var oldValue = _meshCache;
+				_meshCache = value;
+
+				if (!ReferenceEquals(oldValue, value))
+				{
+					oldValue?.Dispose();
+				}
+			}
+		}
 		//internal Dictionary<BlockCoordinates, IList<ChunkMesh.EntryPosition>> MeshPositions { get; set; } = null;
 		
 		private ChunkColumn Owner { get; }
@@ -242,8 +253,7 @@ namespace Alex.Blocks.Storage
 			}
 
 			var coordsIndex = GetCoordinateIndex(x, y, z);
-			var oldState = _blockStorages[storage].Get(x, y, z);
-			
+
 			if (storage == 0)
 			{
 				if (state.Block.LightValue > 0)
@@ -302,11 +312,6 @@ namespace Alex.Blocks.Storage
 
             _blockStorages[storage].Set(x, y, z, state);
 
-            if (oldState.Block is Water && state.Block is Water)
-            {
-	            var a = "";
-            }
-            
             //ScheduledUpdates.Set(coordsIndex, true);
             SetScheduled(x,y,z, true);
             
@@ -420,6 +425,22 @@ namespace Alex.Blocks.Storage
 								if (block.RandomTicked)
 								{
 									++this._tickRefCount;
+								}
+							}
+
+							if (block.LightValue > 0)
+							{
+								var coords = new BlockCoordinates(x,y,z);
+
+								if (!LightSources.Contains(coords))
+								{
+									LightSources.Add(coords);
+								}
+
+								if (GetBlocklight(x, y, z) != block.LightValue)
+								{
+									SetBlocklight(x,y,z, (byte) block.LightValue);
+									SetBlockLightScheduled(x,y,z, true);
 								}
 							}
 						}

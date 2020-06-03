@@ -8,16 +8,17 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using Alex.API.Data.Options;
-using Alex.API.Json;
 using Alex.API.Resources;
 using Alex.API.Services;
+using Alex.API.Utils;
 using Alex.Blocks;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
 using Alex.Entities;
-using Alex.GameStates;
+using Alex.Gamestates;
 using Alex.Graphics.Effect;
 using Alex.Gui;
+using Alex.Items;
 using Alex.Networking.Java;
 using Alex.ResourcePackLib;
 using Alex.ResourcePackLib.Generic;
@@ -53,6 +54,8 @@ namespace Alex
 		
 		public static Effect BlockEffect { get; set; }
 		public static Effect LightingEffect { get; set; }
+		
+		public List<MCPack> Packs { get; } = new List<MCPack>();
 		
 		public ResourceManager(IServiceProvider serviceProvider)
 		{
@@ -282,7 +285,8 @@ namespace Alex
 
 			return true;
 		}
-        
+
+        public DirectoryInfo SkinPackDirectory { get; private set; } = null;
         public DirectoryInfo ResourcePackDirectory { get; private set; } = null;
         private  McResourcePack.McResourcePackPreloadCallback PreloadCallback { get; set; }
         public bool CheckResources(GraphicsDevice device, IProgressReceiver progressReceiver, McResourcePack.McResourcePackPreloadCallback preloadCallback)
@@ -372,11 +376,53 @@ namespace Alex
 
             ItemFactory.Init(RegistryManager, this, ResourcePack, progressReceiver);
 
+            if (Storage.TryGetDirectory(Path.Combine("assets", "bedrockpacks"), out DirectoryInfo info))
+            {
+	            SkinPackDirectory = info;
+	            LoadBedrockPacks(progressReceiver, info);
+            }
+            else
+            {
+	            if (Storage.TryCreateDirectory(Path.Combine("assets", "bedrockpacks")))
+	            {
+		            if (Storage.TryGetDirectory(Path.Combine("assets", "bedrockpacks"), out var dirInfo))
+		            {
+			            SkinPackDirectory = dirInfo;
+		            }
+	            }
+            }
+            
             Options.AlexOptions.ResourceOptions.LoadedResourcesPacks.Bind(ResourcePacksChanged);
             _hasInit = true;
             
             return true;
 		}
+
+        public void LoadBedrockPacks(IProgressReceiver progressReceiver, DirectoryInfo directoryInfo)
+        {
+	        progressReceiver?.UpdateProgress(0, "Loading bedrock .MCPack files...");
+
+	        var files = directoryInfo.EnumerateFiles("*.mcpack").ToArray();
+
+	        for (var index = 0; index < files.Length; index++)
+	        {
+		        var file = files[index];
+		        progressReceiver?.UpdateProgress(index * (files.Length / 100), "Loading bedrock .MCPack files...", file.Name);
+
+		        try
+		        {
+			        using (var archive = new ZipArchive(file.Open(FileMode.Open, FileAccess.Read), ZipArchiveMode.Read))
+			        {
+				        MCPack pack = new MCPack(archive);
+				        Packs.Add(pack);
+			        }
+		        }
+		        catch (Exception ex)
+		        {
+			        Log.Warn(ex, $"Failed to load bedrock .MCPack file: {file.Name}: {ex}");
+		        }
+	        }
+        }
 
         private bool _hasInit = false;
         private void LoadResourcePacks(GraphicsDevice device, IProgressReceiver progress, string[] resourcePacks)

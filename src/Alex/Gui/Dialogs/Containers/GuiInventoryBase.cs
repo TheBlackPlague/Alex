@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Alex.API.Graphics.Typography;
-using Alex.API.Gui.Dialogs;
+using Alex.API.Gui;
 using Alex.API.Gui.Elements;
 using Alex.API.Gui.Graphics;
 using Alex.API.Utils;
@@ -105,6 +105,14 @@ namespace Alex.Gui.Dialogs.Containers
 
 		public InventoryContainerItem AddSlot(int x, int y, int slotId, int inventoryId)
 		{
+			var slot = CreateSlot(x, y, slotId, inventoryId);
+			ContentContainer.AddChild(slot);
+
+			return slot;
+		}
+
+		public InventoryContainerItem CreateSlot(int x, int y, int slotId, int inventoryId)
+		{
 			InventoryContainerItem containerItem = new InventoryContainerItem()
 			{
 				Margin = new Thickness(x, y, 0, 0),
@@ -119,8 +127,6 @@ namespace Alex.Gui.Dialogs.Containers
 			containerItem.CursorLeave += ContainerItemOnCursorLeave;
 
 			containerItem.CursorPressed += ContainerItemOnCursorPressed;
-
-			ContentContainer.AddChild(containerItem);
 
 			return containerItem;
 		}

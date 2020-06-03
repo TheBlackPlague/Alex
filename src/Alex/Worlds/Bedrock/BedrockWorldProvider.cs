@@ -13,6 +13,8 @@ using Alex.API.Services;
 using Alex.API.Utils;
 using Alex.API.World;
 using Alex.Entities;
+using Alex.Net;
+using Alex.Networking.Bedrock.Net.Raknet;
 using Alex.Utils;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Xna.Framework;
@@ -20,6 +22,7 @@ using MiNET.Net;
 using MiNET.Utils;
 using NLog;
 using ChunkCoordinates = Alex.API.Utils.ChunkCoordinates;
+using MathF = System.MathF;
 using PlayerLocation = Alex.API.Utils.PlayerLocation;
 
 namespace Alex.Worlds.Bedrock
@@ -34,7 +37,7 @@ namespace Alex.Worlds.Bedrock
 		private System.Threading.Timer _gameTickTimer;
 		private IEventDispatcher EventDispatcher { get; }
 		public BedrockWorldProvider(Alex alex, IPEndPoint endPoint, PlayerProfile profile, DedicatedThreadPool threadPool,
-			out INetworkProvider networkProvider)
+			out NetworkProvider networkProvider)
 		{
 			Alex = alex;
 			var eventDispatcher = alex.Services.GetRequiredService<IEventDispatcher>();
@@ -77,20 +80,30 @@ namespace Alex.Worlds.Bedrock
 		private bool _flying = false;
 		private PlayerLocation _lastLocation = new PlayerLocation();
         private PlayerLocation _lastSentLocation = new PlayerLocation();
-        private Stopwatch _stopwatch = Stopwatch.StartNew();
+        
+        private long _tickTime = 0;
+        private long _lastPrioritization = 0;
+        private bool _isRealTick = false;
 		private void GameTick(object state)
 		{
+			var isRealTick = _isRealTick;
+			_isRealTick = !isRealTick;
+			
 			if (World == null) return;
 
 			if (_initiated)
 			{
-				
+				if (_isRealTick)
+				{
+					_tickTime++;
+				}
+
 				var p = World.Player;
 				if (p != null && p is Player player && Client.HasSpawned)
 				{
 				//	player.IsSpawned = Spawned;
 
-					if (player.IsFlying != _flying)
+					if (player.IsFlying != _flying && _isRealTick)
 					{
 						_flying = player.IsFlying;
 
@@ -110,16 +123,27 @@ namespace Alex.Worlds.Bedrock
                         _lastSentLocation = pos;
 					}
 
-					if (pos.DistanceTo(_lastLocation) > 16f && _stopwatch.ElapsedMilliseconds > 500)
+					if ((pos.DistanceTo(_lastLocation) > 16f || MathF.Abs(pos.HeadYaw - _lastLocation.HeadYaw) >= 10f) && (_tickTime - _lastPrioritization >= 10 && _isRealTick))
 					{
 						World.ChunkManager.FlagPrioritization();
 						
-						_stopwatch.Stop();
-						_stopwatch.Reset();
 						_lastLocation = pos;
 						UnloadChunks(new ChunkCoordinates(pos), Client.ChunkRadius + 3);
-						_stopwatch.Restart();
+
+						_lastPrioritization = _tickTime;
 					}
+				}
+
+				if (_isRealTick && _tickTime % 20 == 0 && CustomConnectedPong.CanPing)
+				{
+					Client.SendPing();
+				}
+
+
+				if (_isRealTick)
+				{
+					World.Player.OnTick();
+					World.EntityManager.Tick();
 				}
 			}
 		}
@@ -166,7 +190,8 @@ namespace Alex.Worlds.Bedrock
 			//	WorldReceiver?.UpdatePlayerPosition();
 			//}
 
-			_gameTickTimer = new System.Threading.Timer(GameTick, null, 50, 50);
+			CustomConnectedPong.CanPing = true;
+			_gameTickTimer = new System.Threading.Timer(GameTick, null, 50, 25);
 		}
 
 		private bool VerifyConnection()

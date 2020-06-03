@@ -16,15 +16,17 @@ using Alex.API.Network;
 using Alex.API.Services;
 using Alex.API.Utils;
 using Alex.API.World;
+using Alex.Blocks;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
 using Alex.Blocks.Storage;
 using Alex.Entities;
-using Alex.GameStates;
+using Alex.Gamestates;
 using Alex.Graphics.Camera;
 using Alex.Graphics.Models;
 using Alex.Graphics.Models.Items;
 using Alex.Gui.Forms.Bedrock;
+using Alex.Net;
 using Alex.Utils;
 using Alex.Worlds.Bedrock;
 using Microsoft.Extensions.DependencyInjection;
@@ -88,7 +90,7 @@ namespace Alex.Worlds
 		public int RandomTickSpeed { get; set; } = 3;
 		
 		public World(IServiceProvider serviceProvider, GraphicsDevice graphics, AlexOptions options, Camera camera,
-			INetworkProvider networkProvider)
+			NetworkProvider networkProvider)
 		{
 			Graphics = graphics;
 			Camera = camera;
@@ -914,12 +916,16 @@ namespace Alex.Worlds
 			}
 		}
 
-		public void SpawnEntity(long entityId, Entity entity)
+		public bool SpawnEntity(long entityId, Entity entity)
 		{
 			if (EntityManager.AddEntity(entityId, entity))
 			{
 				PhysicsEngine.AddTickable(entity);
+
+				return true;
 			}
+
+			return false;
 			//Log.Info($"Spawned entity {entityId} : {entity} at {entity.KnownPosition} with renderer {entity.GetModelRenderer()}");
 		}
 

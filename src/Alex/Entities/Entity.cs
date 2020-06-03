@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Alex.API;
@@ -11,9 +12,11 @@ using Alex.Blocks.Minecraft;
 using Alex.Graphics.Models.Entity;
 using Alex.Graphics.Models.Entity.Animations;
 using Alex.Graphics.Models.Items;
+using Alex.Net;
 using Alex.ResourcePackLib.Json.Models.Items;
 using Alex.Utils;
 using Alex.Worlds;
+using Alex.Worlds.Java;
 using Microsoft.Xna.Framework;
 using MiNET.Utils;
 using NLog;
@@ -52,7 +55,7 @@ namespace Alex.Entities
 		public bool IsSpawned { get; set; }
 
 		public DateTime LastUpdatedTime { get; set; }
-		public PlayerLocation KnownPosition { get; set; }
+		public virtual PlayerLocation KnownPosition { get; set; }
 
 		public Vector3 Velocity { get; set; } = Vector3.Zero;
 		private float _posOffset = 0;
@@ -74,7 +77,6 @@ namespace Alex.Entities
 		}
 
 		//public HealthManager HealthManager { get; set; }
-
 		public string NameTag { get; set; }
 
 		public virtual bool NoAi { get; set; } = true;
@@ -109,10 +111,14 @@ namespace Alex.Entities
 		public double Height { get; set; } = 1;
 		public double Width { get; set; } = 1;
 		public double Length { get; set; } = 1;
-		public double Drag { get; set; } = 0.6f;
+		public double Drag { get; set; } = 8f;
 		public double Gravity { get; set; } = 16.8f; //9.81f; //1.6f;
+		//Drag & gravity etc is Vanilla * 400
+		
 		public float TerminalVelocity { get; set; } = 78.4f;
 
+		public float MovementSpeedModifier { get; set; } = 0.1f;
+		public double BaseMovementSpeed { get; set; } = 3;
 		public double MovementSpeed { get; set; } = 0.1F;
 		public double FlyingSpeed { get; set; } = 0.4F;
 		
@@ -124,7 +130,7 @@ namespace Alex.Entities
 
 		public bool IsCollidingWithWorld { get; set; } = false;
 
-		public INetworkProvider Network { get; set; }
+		public NetworkProvider Network { get; set; }
 		public Inventory Inventory { get; protected set; }
 		public IItemRenderer ItemRenderer { get; private set; } = null;
 		
@@ -144,7 +150,8 @@ namespace Alex.Entities
 		private EntityModelRenderer.ModelBone _body;
 		private EntityModelRenderer.ModelBone _head;
 		
-		public Entity(int entityTypeId, World level, INetworkProvider network)
+		public HealthManager HealthManager { get; }
+		public Entity(int entityTypeId, World level, NetworkProvider network)
 		{
 			Network = network;
 
@@ -160,6 +167,10 @@ namespace Alex.Entities
 
 			HideNameTag = true;
 			ServerEntity = true;
+			IsAffectedByGravity = true;
+			
+			HealthManager = new HealthManager(this);
+			UUID = new UUID(Guid.NewGuid().ToByteArray());
 		}
 
 		private void ScaleChanged()
@@ -228,7 +239,7 @@ namespace Alex.Entities
 		           // renderer.Scale = new Vector3(_scale);
 
 		            ItemRenderer = renderer;
-
+					
 		            if (this is Player p)
 		            {
 			            var pos = renderer.DisplayPosition;
@@ -386,10 +397,19 @@ namespace Alex.Entities
 					}
 						break;
 					default:
-						Log.Debug($"Unknown flag: {(MiNET.Entities.Entity.MetadataFlags) meta.Key}");
+						if (!HandleMetadata((MiNET.Entities.Entity.MetadataFlags) meta.Key, meta.Value))
+						{
+							Log.Debug($"Unknown flag: {(MiNET.Entities.Entity.MetadataFlags) meta.Key}");
+						}
+
 						break;
 				}
 			}
+		}
+
+		protected virtual bool HandleMetadata(MiNET.Entities.Entity.MetadataFlags flag, MetadataEntry entry)
+		{
+			return false;
 		}
 
 		private void HandleEntityFlags(BitArray bits)
@@ -480,7 +500,7 @@ namespace Alex.Entities
                 }
             }
 
-            if (now.Subtract(LastUpdatedTime).TotalMilliseconds >= 50)
+      /*      if (now.Subtract(LastUpdatedTime).TotalMilliseconds >= 50)
             {
                 LastUpdatedTime = now;
                 try
@@ -491,7 +511,7 @@ namespace Alex.Entities
                 {
                     Log.Warn(e, $"Exception while trying to tick entity!");
                 }
-            }
+            }*/
         }
 
         public void UpdateHeadYaw(float rotation)
@@ -578,6 +598,15 @@ namespace Alex.Entities
 					}
 
 					_rightArmModel.Position = posOffset;
+					
+					if (_rightSleeveModel != null && _leftSleeveModel != null)
+					{
+						_rightSleeveModel.Rotation = _rightArmModel.Rotation;
+						_rightSleeveModel.Position = posOffset;
+						
+						_leftSleeveModel.Rotation = _leftArmModel.Rotation;
+						_leftSleeveModel.Position = posOffset;
+					}
 				}
 
 				if (_head != null)
@@ -593,6 +622,15 @@ namespace Alex.Entities
 				if (_rightArmModel != null && _leftArmModel != null)
 				{
 					_rightArmModel.Position = _leftArmModel.Position = Vector3.Zero;
+					
+					if (_rightSleeveModel != null && _leftSleeveModel != null)
+					{
+						_rightSleeveModel.Rotation = _rightArmModel.Rotation;
+						_rightSleeveModel.Position = Vector3.Zero;
+						
+						_leftSleeveModel.Rotation = _leftArmModel.Rotation;
+						_leftSleeveModel.Position = Vector3.Zero;
+					}
 				}
 
 				if (_head != null)
@@ -702,14 +740,22 @@ namespace Alex.Entities
 			
 			Age++;
 
+			HealthManager.OnTick();
+			
 			if (_isHit && Age > _hitAnimationEnd)
 			{
 				_isHit = false;
 				ModelRenderer.EntityColor = Color.White.ToVector3();
 			}
-			
+
 			if (DoRotationCalculations)
+			{
 				UpdateRotations();
+			}
+			else
+			{
+				KnownPosition.Yaw = KnownPosition.HeadYaw;
+			}
 
 			_previousPosition = KnownPosition;
 
@@ -729,7 +775,13 @@ namespace Alex.Entities
 		//	IsMoving = Velocity.LengthSquared() > 0f;
 
 		var knownPos = new BlockCoordinates(new Vector3(KnownPosition.X, KnownPosition.Y, KnownPosition.Z));
-		var knownDown = KnownPosition.GetCoordinates3D().BlockDown();
+		var knownDown = KnownPosition.GetCoordinates3D();
+
+		if (!(Network is JavaNetworkProvider))
+		{
+			knownDown = knownDown.BlockDown();
+		}
+		
 			var blockBelowFeet = Level?.GetBlockStates(knownDown.X, knownDown.Y, knownDown.Z);
 			var feetBlock = Level?.GetBlockStates(knownPos.X, knownPos.Y, knownPos.Z).ToArray();
 			var headBlock = Level?.GetBlock(KnownPosition.GetCoordinates3D() + new BlockCoordinates(0, 1, 0));
@@ -783,7 +835,9 @@ namespace Alex.Entities
 				}
 
 				if (!feetBlock.Any(x => x.Storage == 0 && x.State.Block.Solid))
+				{
 					KnownPosition.OnGround = false;
+				}
 			}
 
 			IsInWater = FeetInWater || HeadInWater;
@@ -810,6 +864,8 @@ namespace Alex.Entities
 		private float lastRotationYawHead = 0f;
 		private Vector3 _previousPosition = Vector3.Zero;
 		protected bool SnapHeadYawRotationOnMovement { get; set; } = true;
+		protected bool SnapYawRotationOnMovement { get; set; } = false;
+		
 		private void UpdateRotations()
 		{
 			double deltaX = KnownPosition.X - _previousPosition.X;
@@ -832,6 +888,11 @@ namespace Alex.Entities
 				if (SnapHeadYawRotationOnMovement)
 				{
 					KnownPosition.HeadYaw = newRotationYawHead;
+				}
+				
+				if (SnapYawRotationOnMovement)
+				{
+					KnownPosition.Yaw = KnownPosition.HeadYaw;
 				}
 
 				lastRotationYawHead = newRotationYawHead;
@@ -872,14 +933,14 @@ namespace Alex.Entities
 			ModelRenderer.GetBone("leftArm", out _rightArmModel);
 			ModelRenderer.GetBone("rightArm", out _leftArmModel);
 
-			ModelRenderer.GetBone("leftLeg", out _leftLegModel);
-			ModelRenderer.GetBone("rightLeg", out _rightLegModel);
+			ModelRenderer.GetBone("rightLeg", out _leftLegModel);
+			ModelRenderer.GetBone("leftLeg", out _rightLegModel);
 
-			ModelRenderer.GetBone("leftSleeve", out _leftSleeveModel);
-			ModelRenderer.GetBone("rightSleeve", out _rightSleeveModel);
+			ModelRenderer.GetBone("rightSleeve", out _leftSleeveModel);
+			ModelRenderer.GetBone("leftSleeve", out _rightSleeveModel);
 
-			ModelRenderer.GetBone("leftPants", out _leftPantsModel);
-			ModelRenderer.GetBone("rightPants", out _rightPantsModel);
+			ModelRenderer.GetBone("rightPants", out _leftPantsModel);
+			ModelRenderer.GetBone("leftPants", out _rightPantsModel);
 
 			ModelRenderer.GetBone("jacket", out _jacketModel);
 			ModelRenderer.GetBone("head", out _head);
@@ -984,9 +1045,14 @@ namespace Alex.Entities
 			b = b >> m;
 			return a == b || a == b - 1 || a == b + 1;
 		}
-
+		
 		public void RenderNametag(IRenderArgs renderArgs)
 		{
+			string clean = NameTag;
+
+			if (string.IsNullOrWhiteSpace(clean))
+				return;
+			
 			var halfWidth = -((((float) Width) * Scale));
 			
 			var maxDistance = (renderArgs.Camera.FarDistance) / (64f);
@@ -1032,29 +1098,29 @@ namespace Alex.Entities
 			//float scaler = NametagScale;
 			var scale = new Vector2(scaler * scaleRatio, scaler * scaleRatio);
 			//scale *= Alex.Instance.GuiRenderer.ScaledResolution.ElementScale;
-	
-			string clean = NameTag;
 
-			var stringCenter = Alex.Font.MeasureString(clean, scale);
-			var c = new Point((int)stringCenter.X, (int)stringCenter.Y);
-
-			textPosition.X = (int)(textPosition.X - (c.X / 2d));
-			textPosition.Y = (int)(textPosition.Y - (c.Y / 2d));
-			
-			renderArgs.SpriteBatch.FillRectangle(new Rectangle(textPosition.ToPoint(), c), new Color(Color.Black, 128), screenSpace.Z);
-			Alex.Font.DrawString(renderArgs.SpriteBatch, clean, textPosition, TextColor.White, FontStyle.None, scale, layerDepth: screenSpace.Z);
-		}
-
-		public static float NametagScale { get; set; } = 2f;
-
-		public virtual void TerrainCollision(Vector3 collisionPoint, Vector3 direction)
-		{
-			if (direction.Y < 0) //Collided with the ground
+			Vector2 renderPosition = textPosition;
+			int yOffset = 0;
+			foreach (var str in clean.Split('\n'))
 			{
-				KnownPosition.OnGround = true;
+				var stringCenter = Alex.Font.MeasureString(str, scale);
+				var c            = new Point((int) stringCenter.X, (int) stringCenter.Y);
+
+				renderPosition.X = (int) (textPosition.X - (c.X / 2d));
+				renderPosition.Y = (int) (textPosition.Y - (c.Y / 2d)) + yOffset;
+
+				renderArgs.SpriteBatch.FillRectangle(
+					new Rectangle(renderPosition.ToPoint(), c), new Color(Color.Black, 128), screenSpace.Z);
+
+				Alex.Font.DrawString(
+					renderArgs.SpriteBatch, str, renderPosition, TextColor.White, FontStyle.None, scale,
+					layerDepth: screenSpace.Z);
+
+				yOffset += c.Y;
 			}
 		}
 
+		public static float NametagScale { get; set; } = 2f;
 		public void Dispose()
 		{
 			ModelRenderer?.Dispose();

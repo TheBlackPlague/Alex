@@ -7,6 +7,7 @@ using Alex.API.Blocks.State;
 using Alex.API.Graphics;
 using Alex.API.Utils;
 using Alex.API.World;
+using Alex.Blocks;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
 using Alex.Blocks.Storage;
@@ -352,32 +353,13 @@ namespace Alex.Worlds
 				_isHighPriority = value;
 				if (!value)
 				{
-					if (_chunkMeshCache != null)
-					{
-						for (var index = 0; index < _chunkMeshCache.Length; index++)
-						{
-							//var cached = _chunkMeshCache[index];
-							//cached?.Mesh?.Dispose();
-							//_chunkMeshCache[index] = null;
-						}
-
-						//_chunkMeshCache = null;
-					}
 				}
 				else
 				{
-					if (_chunkMeshCache == null)
-						_chunkMeshCache = new ChunkMeshCache[16];
+				
 				}
 			}
 		}
-
-		private class ChunkMeshCache
-		{
-			public ChunkMesh Mesh { get; set; }
-		}
-
-		private ChunkMeshCache[] _chunkMeshCache = null;
 
 		private bool _heightDirty = true;
 		private int _heighest = 256;
@@ -456,15 +438,7 @@ namespace Alex.Worlds
 			{
 				chunksSection?.Dispose();
 			}
-
-			if (_chunkMeshCache != null)
-			{
-				foreach (var meshCache in _chunkMeshCache)
-				{
-					meshCache?.Mesh.Dispose();
-				}
-			}
-
+			
 			//	if (Mesh != null)
 			//{
 			//	Mesh = null;
@@ -555,6 +529,7 @@ namespace Alex.Worlds
 					}
 
 					storage.IsDirty = true;
+					
 					this.Sections[sectionY] = storage;
 				}
 

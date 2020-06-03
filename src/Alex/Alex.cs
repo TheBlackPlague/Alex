@@ -19,21 +19,24 @@ using Alex.API.Resources;
 using Alex.API.Services;
 using Alex.API.Utils;
 using Alex.API.World;
+using Alex.Blocks;
 using Alex.Blocks.Minecraft;
 using Alex.Blocks.State;
 using Alex.Blocks.Storage;
 using Alex.Entities;
-using Alex.GameStates;
-using Alex.Gamestates.Debug;
-using Alex.GameStates.Gui.MainMenu;
-using Alex.GameStates.Playing;
+using Alex.Gamestates;
+using Alex.Gamestates.Debugging;
+using Alex.Gamestates.InGame;
 using Alex.Graphics.Effect;
+using Alex.Graphics.Models.Blocks;
 using Alex.Gui;
 using Alex.Gui.Dialogs.Containers;
 using Alex.Items;
+using Alex.Net;
 using Alex.Networking.Bedrock;
 using Alex.Networking.Java.Packets;
 using Alex.Plugins;
+using Alex.ResourcePackLib.Json.Models.Entities;
 using Alex.Services;
 using Alex.Utils;
 using Alex.Utils.Inventories;
@@ -61,6 +64,12 @@ namespace Alex
 {
 	public partial class Alex : Microsoft.Xna.Framework.Game
 	{
+		public static bool InGame { get; set; } = false;
+		public static ServerType ServerType { get; set; } = ServerType.Bedrock;
+		
+		public static EntityModel PlayerModel { get; set; }
+		public static Image<Rgba32> PlayerTexture { get; set; }
+		
 		private static readonly Logger Log = LogManager.GetCurrentClassLogger(typeof(Alex));
 
 		public static string Gpu { get; private set; } = "";
@@ -290,6 +299,14 @@ namespace Alex
 			});
 			GuiRenderer.SetLanguage(options.AlexOptions.MiscelaneousOptions.Language);
 
+			options.AlexOptions.VideoOptions.SmoothLighting.Bind(
+				(value, newValue) =>
+				{
+					ResourcePackBlockModel.SmoothLighting = newValue;
+				});
+
+			ResourcePackBlockModel.SmoothLighting = options.AlexOptions.VideoOptions.SmoothLighting.Value;
+
 			SetAntiAliasing(options.AlexOptions.VideoOptions.Antialiasing > 0,
 				options.AlexOptions.VideoOptions.Antialiasing.Value);
 
@@ -511,6 +528,19 @@ namespace Alex
 			AnvilWorldProvider.LoadBlockConverter();
 
 			PluginManager.EnablePlugins();
+
+			var storage = Services.GetRequiredService<IStorageSystem>();
+
+			if (storage.TryReadJson("skin.json", out EntityModel model))
+			{
+				PlayerModel = model;
+			}
+
+			if (storage.TryReadBytes("skin.png", out byte[] skinBytes))
+			{
+				var skinImage = Image.Load<Rgba32>(skinBytes);
+				PlayerTexture = skinImage;
+			}
 			
 			if (LaunchSettings.ModelDebugging)
 			{
@@ -536,7 +566,7 @@ namespace Alex
 					//	Count = rnd.Next(1, 64)
 					//};
 				}
-				//GuiManager.ShowDialog(new GuiFurnaceDialog(inventory, new InventoryBase(3)));
+				//GuiManager.ShowDialog(new GuiPlayerCreativeInventoryDialog(ItemFactory.AllItems));
 			}
 
 			GameStateManager.RemoveState("splash");
@@ -568,15 +598,17 @@ namespace Alex
 				eventDispatcher?.Reset();
 				
 				WorldProvider provider;
-				INetworkProvider networkProvider;
+				NetworkProvider networkProvider;
 				IsMultiplayer = true;
 				if (bedrock)
 				{
+					ServerType = ServerType.Bedrock;
 					provider = new BedrockWorldProvider(this, serverEndPoint,
 						profile, NetworkThreadPool, out networkProvider);
 				}
 				else
 				{
+					ServerType = ServerType.Java;
 					provider = new JavaWorldProvider(this, serverEndPoint, profile,
 						out networkProvider)
 					{
@@ -594,7 +626,7 @@ namespace Alex
 			oldNetworkPool?.Dispose();
 		}
 
-		public void LoadWorld(WorldProvider worldProvider, INetworkProvider networkProvider)
+		public void LoadWorld(WorldProvider worldProvider, NetworkProvider networkProvider)
 		{
 			PlayingState playState = new PlayingState(this, GraphicsDevice, worldProvider, networkProvider);
 			

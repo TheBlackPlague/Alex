@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Drawing;
 using System.IO;
 using System.Threading;
 using Alex.API.Graphics;
@@ -11,16 +10,15 @@ using Alex.API.Gui.Graphics;
 using Alex.API.Services;
 using Alex.API.Utils;
 using Alex.Entities;
-using Alex.GameStates.Gui.Common;
-using Alex.Gamestates.Gui.MainMenu;
-using Alex.GameStates.Gui.MainMenu;
-using Alex.GameStates.Gui.Multiplayer;
+using Alex.Gamestates.Common;
+using Alex.Gamestates.MainMenu;
+using Alex.Gamestates.Multiplayer;
+using Alex.Graphics.Models.Entity;
 using Alex.Gui;
 using Alex.Gui.Elements;
-using Alex.Gui.Elements.Inventory;
+using Alex.Items;
 using Alex.Networking.Java;
 using Alex.Services;
-using Alex.Utils;
 using Alex.Worlds;
 using Alex.Worlds.Generators;
 using Microsoft.Extensions.DependencyInjection;
@@ -31,7 +29,7 @@ using NLog;
 using RocketUI;
 using Color = Microsoft.Xna.Framework.Color;
 
-namespace Alex.GameStates
+namespace Alex.Gamestates
 {
 	public class TitleState : GuiGameStateBase
 	{
@@ -284,8 +282,8 @@ namespace Alex.GameStates
 				
 				if (ItemFactory.TryGetItem("minecraft:diamond_sword", out var sword))
 				{
-					_playerView.Entity.Inventory.MainHand = sword;
-					_playerView.Entity.Inventory[_playerView.Entity.Inventory.SelectedSlot] = sword;
+					//_playerView.Entity.Inventory.MainHand = sword;
+					//_playerView.Entity.Inventory[_playerView.Entity.Inventory.SelectedSlot] = sword;
 				}
 			}
 		}
@@ -345,14 +343,14 @@ namespace Alex.GameStates
 						Anchor = Alignment.BottomRight,
 					});
 
-			AddChild(new GuiButton("Switch user", LoginBtnPressed)
+			AddChild(new GuiButton("Change Skin", ChangeSKinBtnPressed)
 			{
 				Anchor = Alignment.BottomRight,
 				Modern = false,
 				TranslationKey = "",
 				Margin = new Thickness(15, 15, 6, 15),
 				Width = 90,
-				Enabled = false
+				//Enabled = false
 			});
 
 			AutoResetEvent reset = new AutoResetEvent(false);
@@ -379,9 +377,10 @@ namespace Alex.GameStates
 			//Alex.GameStateManager.AddState("profileSelection", new ProfileSelectionState(_backgroundSkyBox));
 		}
 
-		private void LoginBtnPressed()
+		private void ChangeSKinBtnPressed()
 		{
-			Alex.GameStateManager.SetActiveState(new ProfileSelectionState(_backgroundSkyBox, Alex), true);
+			Alex.GameStateManager.SetActiveState(new SkinSelectionState(_backgroundSkyBox, Alex), true);
+			//Alex.GameStateManager.SetActiveState(new ProfileSelectionState(_backgroundSkyBox, Alex), true);
 		}
 
 		private float _rotation;
@@ -452,6 +451,16 @@ namespace Alex.GameStates
 
 		protected override void OnShow()
 		{
+			if (Alex.PlayerModel != null && Alex.PlayerTexture != null)
+			{
+				Alex.UIThreadQueue.Enqueue(
+					() =>
+					{
+						var texture = TextureUtils.BitmapToTexture2D(Alex.GraphicsDevice, Alex.PlayerTexture);
+						_playerView.Entity.ModelRenderer = new EntityModelRenderer(Alex.PlayerModel, texture);
+					});
+			}
+			
 			if (Alex.GameStateManager.TryGetState<OptionsState>("options", out _))
 			{
 				Alex.GameStateManager.RemoveState("options");

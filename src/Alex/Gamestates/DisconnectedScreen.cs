@@ -1,8 +1,7 @@
 ﻿using Alex.API.Gui.Elements;
 using Alex.API.Gui.Elements.Controls;
 using Alex.API.Utils;
-using Alex.GameStates;
-using Alex.GameStates.Gui.Common;
+using Alex.Gamestates.Common;
 using RocketUI;
 
 namespace Alex.Gamestates
@@ -34,6 +33,7 @@ namespace Alex.Gamestates
 		private void MenuButtonClicked()
 		{
 			Alex.GameStateManager.SetActiveState<TitleState>("title");
+			Alex.IsMouseVisible = true;
 		}
 
 	    protected override void OnShow()
